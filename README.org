@@ -2,29 +2,28 @@
 
 * About
 ~imbot~ removes the hassle of switching input method back and forth.
+It is recommended to use the fcitx-dbus backend for linux, and to use the rime-lib backend for Windows and Macos.
 
 * Install
 Put the files on load-path, or install ~imbot~ from ~melpa~.
 
 * Config
-1. For Windows and Mac users, commands for input method toggle can be found at https://github.com/laishulu/emacs-smart-input-source
-2. If your commands for input method toggle were not covered in the provided setups, please follow the imbot--im-config examples in imbot--fcitx5.el or imbot--ibus.el to make imbot work.
-3. Make sure your input method remembers each application's last input state. For example, if you use fcitx5, you have to set the "Share Input Method" option to "No".
-4. An example configuration using use-package:
 
-#+BEGIN_SRC lisp
-(use-package imbot
-    :hook
-        (evil-mode . imbot-mode)
-    :preface
-        (setq imbot--im-config 'imbot--fcitx5))
-#+END_SRC
+#+begin_src emacs-lisp :exports none
+    (use-package imbot
+      :custom (default-input-method "imbot")
+      :if (not (windows-nt-p))
+      :demand t
+      :config
+      ;; This function is used to ensure the input method is disabled.
+      (defun my-cleanup-input-method (&rest args)
+        (when current-input-method
+          (deactivate-input-method)))
+    
+      ;; Add advice to run the cleanup function after aborting wdired.
+      (advice-add 'wdired-change-to-dired-mode :after #'my-cleanup-input-method))
+#+end_src
 
-* Advanced Usage for fcitx5 users
-If you find pre command checker for input status is slow, the input status can be obtained with a lua script for fcitx5.
-Please follow instructions below:
+Besure to run emacs with:
 
-1. disable pre command check with (setq imbot--active-omit-check t)
-2. put update_im_state.sh under ~/.local/bin/
-3. put "addon" and "lua" under ~/.local/share/fcitx5/
-4. the default input method toggle shortcut is Ctrl+\ , the hot key is set in state_monitor.lua
+    GTK_IM_MODULE="" QT_IM_MODULE="" SDL_IM_MODULE="" INPUT_METHOD="" XMODIFIERS='@im=""' emacs
