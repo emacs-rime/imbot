@@ -1,4 +1,21 @@
-;;; imbot.el *- lexical-binding: t; -*-
+;;; imbot.el
+;; URL: https://github.com/QiangF/imbot
+;; Created: July 24th, 2020
+;; Keywords: convenience
+;; Package-Requires: ((emacs "29.1"))
+;; Version: 3.0
+
+;; This file is not part of GNU Emacs.
+
+;; This program is free software: you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation, either version 3 of the License, or
+;; (at your option) any later version.
+
+;; imbot provide an emacs input method using fcitx5 through dbus or librime with a dynamic module.
+;; usage:
+;; (require 'imbot)
+;; (setq default-input-method "imbot")
 
 (require 'seq)
 (require 'dash)
@@ -11,7 +28,7 @@
 (defvar imbot-backend 'backend-fcitx-dbus
   "definition for imbot-backend functions")
 
-(require imbot-backend)
+(require `,imbot-backend)
 
 (defun imbot--predicate-program-mode-p ()
   "当前为`prog-mode'或`conf-mode'，且光标在注释或字符串当中。"

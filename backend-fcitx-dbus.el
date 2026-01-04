@@ -1,4 +1,4 @@
-;;; fcitx-dbus-backend.el *- lexical-binding: t; -*-
+;;; fcitx-dbus-backend.el
 
 (require 'dbus)
 
@@ -24,6 +24,14 @@
 (defun fcitx-alive ()
   "Check if theres a running fcitx."
   (dbus-ping :session fcitx-service 100))
+
+(defun imbot-toggle ()
+  "Function used to toggle input method outside emacs, used in Exwm."
+  (interactive)
+  ;; 1st engine is english input method
+  (if (equal (fcitx-controller-call "State") 1)
+      (fcitx-controller-call "Activate")
+    (fcitx-controller-call "Deactivate")))
 
 (defun fcitx-find-correct-service ()
   "List all registered D-Bus services containing 'Fcitx'."
@@ -60,11 +68,11 @@
     (message "Current IM: %s" im)
     im))
 
-(defun fcitx-ic-call-method (method &rest args)
+(defun fcitx-ic-call (method &rest args)
   (apply 'dbus-call-method `(:session ,fcitx-service ,fcitx-ic-path ,fcitx-ic-interface
                                       ,method ,@args)))
 
-(defun fcitx-controller-call-method (method &rest args)
+(defun fcitx-controller-call (method &rest args)
   (apply 'dbus-call-method `(:session ,fcitx-service "/controller" "org.fcitx.Fcitx.Controller1"
                                       ,method ,@args)))
 
@@ -86,7 +94,7 @@ You then interact with this new object path for input method operations. "
                                 (:struct "display" "emacs")))))
     (setq fcitx-ic-path (car ic))
     ;; set capability CapabilityFlag::ClientSideInputPanel = (1ULL << 39)
-    (fcitx-ic-call-method "SetCapability" :uint64
+    (fcitx-ic-call "SetCapability" :uint64
                           (logior
                            (ash 1 39)
                            ;; ClientSideControlState
@@ -109,9 +117,9 @@ You then interact with this new object path for input method operations. "
 (defun imbot-backend-activate ()
   (unless fcitx-ic-path
     (fcitx-create-input-context (number-to-string (round (time-to-seconds)))))
-  (fcitx-ic-call-method "FocusIn")
+  (fcitx-ic-call "FocusIn")
   ;; im is a string, such as pinyin, rime
-  (fcitx-controller-call-method "SetCurrentIM" :string imbot-backend-im))
+  (fcitx-controller-call "SetCurrentIM" :string imbot-backend-im))
 
 ;; keycode can be looked up in keyboard.py
 ;; keyval can be looked up in keysyms.py
@@ -132,7 +140,7 @@ You then interact with this new object path for input method operations. "
 ;; Alt/Meta	(ash 1 3) → 8
 
 (defun fcitx-process-key (keysym state)
-  (fcitx-ic-call-method "ProcessKeyEvent" keysym 0 state nil 0))
+  (fcitx-ic-call "ProcessKeyEvent" keysym 0 state nil 0))
 
 ;; backend specific key definition
 (defvar imbot-backend-menu-keys `(("M-n" . #xFF56) ; Next PageDown
@@ -200,14 +208,14 @@ You then interact with this new object path for input method operations. "
       (cons tooltip fcitx-ic-commit-string))))
 
 (defun imbot-backend-focusout ()
-  (fcitx-ic-call-method "FocusOut"))
+  (fcitx-ic-call "FocusOut"))
 
 (defun imbot-backend-clear-composition ()
-  (fcitx-ic-call-method "Reset")
+  (fcitx-ic-call "Reset")
   (setq fcitx-ic-commit-string nil))
 
 (defun imbot-backend-cleanup ()
-  (fcitx-ic-call-method "DestroyIC"))
+  (fcitx-ic-call "DestroyIC"))
 
 (defun imbot-backend-escape ()
   "Clear the composition."
