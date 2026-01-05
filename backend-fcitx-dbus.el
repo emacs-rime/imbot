@@ -29,9 +29,11 @@
   "Function used to toggle input method outside emacs, used in Exwm."
   (interactive)
   ;; 1st engine is english input method
-  (if (equal (fcitx-controller-call "State") 1)
-      (fcitx-controller-call "Activate")
-    (fcitx-controller-call "Deactivate")))
+  (if (equal major-mode 'exwm-mode)
+      (if (equal (fcitx-controller-call "State") 1)
+          (fcitx-controller-call "Activate")
+        (fcitx-controller-call "Deactivate"))
+    (toggle-input-method)))
 
 (defun fcitx-find-correct-service ()
   "List all registered D-Bus services containing 'Fcitx'."
@@ -112,6 +114,25 @@ You then interact with this new object path for input method operations. "
 
 (defun fcitx-handler-for-client-ui (&rest tooltip)
   (setq fcitx-ic-tooltip tooltip))
+
+(when (bound-and-true-p exwm-enable)
+  (defvar exwm-inside-input-field nil)
+  (defun exwm-input-field-entry-handler (&rest args)
+    (setq exwm-inside-input-field t))
+  (defun exwm-input-field-exit-handler ()
+    (setq exwm-inside-input-field nil))
+
+  (dbus-register-signal
+   :session fcitx-service
+   nil                                  ; PATH: Wildcard, listen on all object paths
+   fcitx-ic-interface "CurrentIM"
+   #'exwm-input-field-entry-handler)
+
+  (dbus-register-signal
+   :session fcitx-service
+   nil
+   fcitx-ic-interface "NotifyFocusOut"
+   #'exwm-input-field-exit-handler))
 
 ;; backend interface functions
 (defun imbot-backend-activate ()

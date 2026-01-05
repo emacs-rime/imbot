@@ -1,9 +1,13 @@
-;;; imbot.el
-;; URL: https://github.com/QiangF/imbot
+;;; imbot.el --- Emacs input method  -*- lexical-binding: t; -*-
+
+;; Copyright (C) 2025  Qiang Fang
+
+;; Author: Qiang Fang
+;; Keywords: convenience, input method, dbus
+;; Homepage: https://github.com/QiangF/imbot
 ;; Created: July 24th, 2020
-;; Keywords: convenience
 ;; Package-Requires: ((emacs "29.1"))
-;; Version: 3.0
+;; Package-Version: 4.0
 
 ;; This file is not part of GNU Emacs.
 
@@ -12,10 +16,14 @@
 ;; the Free Software Foundation, either version 3 of the License, or
 ;; (at your option) any later version.
 
+;;; Commentary:
+
 ;; imbot provide an emacs input method using fcitx5 through dbus or librime with a dynamic module.
 ;; usage:
 ;; (require 'imbot)
 ;; (setq default-input-method "imbot")
+
+;;; Code:
 
 (require 'seq)
 (require 'dash)
@@ -164,21 +172,21 @@
 
 (defun imbot--update (key state)
   (let ((handled (imbot-backend-process-key key state)))
-    (with-silent-modifications
-      (unwind-protect
-          ;; commit is still nil when composition is active
-          (if handled
-              (let* ((output (imbot-backend-update-tooltip))
-                     (tooltip (car output))
-                     (commit (cdr output)))
-                (if tooltip
-                    (imbot--map-set)
-                  (imbot--map-unset))
-                (imbot--tooltip-posframe tooltip)
-                (when commit
-                  (insert commit)
-                  (setq fcitx-ic-commit-string nil)))
-            (list key))))))
+    ;; with-silent-modifications
+    (unwind-protect
+        ;; commit is still nil when composition is active
+        (if handled
+            (let* ((output (imbot-backend-update-tooltip))
+                   (tooltip (car output))
+                   (commit (cdr output)))
+              (if tooltip
+                  (imbot--map-set)
+                (imbot--map-unset))
+              (imbot--tooltip-posframe tooltip)
+              (when commit
+                (setq fcitx-ic-commit-string nil)
+                (insert commit)))
+          (list key)))))
 
 (defun imbot--activate (&optional _name)
   (unless buffer-read-only
