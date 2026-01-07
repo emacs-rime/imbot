@@ -39,8 +39,8 @@
 (require `,imbot-backend)
 
 (defun imbot--predicate-program-mode-p ()
-  "当前为`prog-mode'或`conf-mode'，且光标在注释或字符串当中。"
   (when (derived-mode-p 'prog-mode 'conf-mode)
+    ;; point in comment or string
     (not (or (nth 3 (syntax-ppss))
              (nth 4 (syntax-ppss))))))
 
@@ -67,13 +67,14 @@
   ;; (message "real this command %s" real-this-command)
   (unless (or (eq real-this-command 'imbot--english-inline-deactivate)
               (eq real-this-command 'imbot--english-inline-quit)
-              (eq real-this-command 'toggle-input-method))
+              (eq real-this-command 'toggle-input-method)
+              (eq major-mode 'mistty-mode))
     (let* ((visual-line-beginning (line-beginning-position))
            (point (point))
            (overlay-active (overlayp imbot--overlay))
            (english-context
             (or
-             ;; 中文后面紧接1个空格切换到英文输入
+             ;; switch to English when one space follows Chinse character
              ;; \cC represents any character of category “C”, according to “M-x describe-categories”
              (looking-back "\\cC " (max visual-line-beginning (- point 2)))
              (string-match "^\\s-*[0-9]+$" (buffer-substring-no-properties visual-line-beginning point))
@@ -139,8 +140,7 @@
 
 (defun imbot--text-read-only-p ()
   "Return t if the text at point is read-only."
-  ;; NOTE: 在 widget 输入框存在的情况下，即使 buffer 是只读的，widget 输入
-  ;; 框也有可能要输入文本，EWW 就存在类似情况。
+  ;; EWW: when a readonly buffer is readonly，it may still have modifiable text input field
   (and (get-pos-property (point) 'read-only)
        (not (or inhibit-read-only
                 (get-pos-property (point) 'inhibit-read-only)))))
@@ -163,30 +163,30 @@
 (defvar imbot--overriding nil)
 
 (defun imbot--map-set ()
-  (setq overriding-terminal-local-map imbot--map)
+  (set-transient-map imbot--map)
+  ;; set-transient-map uses overriding-terminal-local-map
+  ;; save the source of overriding in a variable
   (setq imbot--overriding t))
 
 (defun imbot--map-unset ()
-  (setq overriding-terminal-local-map nil)
   (setq imbot--overriding nil))
 
 (defun imbot--update (key state)
   (let ((handled (imbot-backend-process-key key state)))
-    ;; with-silent-modifications
-    (unwind-protect
-        ;; commit is still nil when composition is active
-        (if handled
-            (let* ((output (imbot-backend-update-tooltip))
-                   (tooltip (car output))
-                   (commit (cdr output)))
-              (if tooltip
-                  (imbot--map-set)
-                (imbot--map-unset))
-              (imbot--tooltip-posframe tooltip)
-              (when commit
-                (setq fcitx-ic-commit-string nil)
-                (insert commit)))
-          (list key)))))
+    ;; commit is still nil when composition is active
+    (if handled
+        (let* ((output (imbot-backend-update-tooltip))
+               (tooltip (car output))
+               (commit (cdr output)))
+          (with-silent-modifications
+            (if tooltip
+                (imbot--map-set)
+              (imbot--map-unset))
+            (imbot--tooltip-posframe tooltip))
+          (when commit
+            (setq fcitx-ic-commit-string nil)
+            (insert commit)))
+      (list key))))
 
 (defun imbot--activate (&optional _name)
   (unless buffer-read-only
