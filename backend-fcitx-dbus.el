@@ -19,7 +19,6 @@
 (defvar fcitx-ic-path nil)
 (defvar fcitx-ic-interface "org.fcitx.Fcitx.InputContext1")
 (defvar imbot-backend-im "rime")
-(defvar fcitx-ic-commit-string nil)
 
 (defun fcitx-alive ()
   "Check if theres a running fcitx."
@@ -110,7 +109,14 @@ You then interact with this new object path for input method operations. "
 
 ;; (s str)
 (defun fcitx-handler-for-commit-string (s)
-  (setq fcitx-ic-commit-string s))
+  "use return to update region in iedit-mode"
+  (imbot--map-unset)
+  (insert s)
+  (set-buffer-modified-p t)
+  ;; (run-hooks 'post-self-insert-hook)
+  (when (equal major-mode 'mistty-mode)
+    (mistty--post-command))
+  (redisplay))
 
 (defun fcitx-handler-for-client-ui (&rest tooltip)
   (setq fcitx-ic-tooltip tooltip))
@@ -208,7 +214,7 @@ You then interact with this new object path for input method operations. "
 (defun imbot-backend-update-tooltip ()
   "Build candidate menu tooltip from imbot context."
   (destructuring-bind (preedit cursorpos auxUp auxDown candidates candidateIndex layoutHint hasPrev hasNext) fcitx-ic-tooltip
-    (let (prompt-str page-str candidate-str tooltip)
+    (let (prompt-str page-str candidate-str)
       (when preedit (setq prompt-str (with-temp-buffer
                                        (insert (caar preedit))
                                        (goto-char (1+ cursorpos))
@@ -225,15 +231,10 @@ You then interact with this new object path for input method operations. "
                                    (if (= (1- (string-to-number idx)) candidateIndex)
                                        (format "[%s%s]" idx word)
                                      (format "%s%s" idx word)))) candidates " ")))
-            (setq tooltip (concat prompt-str page-str "\n" candidate-str)))
-      (cons tooltip fcitx-ic-commit-string))))
-
-(defun imbot-backend-focusout ()
-  (fcitx-ic-call "FocusOut"))
+            (concat prompt-str page-str "\n" candidate-str)))))
 
 (defun imbot-backend-clear-composition ()
-  (fcitx-ic-call "Reset")
-  (setq fcitx-ic-commit-string nil))
+  (fcitx-ic-call "Reset"))
 
 (defun imbot-backend-cleanup ()
   (fcitx-ic-call "DestroyIC"))

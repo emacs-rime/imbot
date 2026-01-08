@@ -79,7 +79,7 @@
              (looking-back "\\cC " (max visual-line-beginning (- point 2)))
              (string-match "^\\s-*[0-9]+$" (buffer-substring-no-properties visual-line-beginning point))
              ;; (looking-at-p "^\\*")    ; org heading
-             (looking-back "[a-zA-Z\\-]" (max visual-line-beginning (1- point))))))
+             (looking-back "[a-zA-Z\\_-]" (max visual-line-beginning (1- point))))))
       (if overlay-active
           (if english-context
               (progn (move-overlay imbot--overlay visual-line-beginning (line-end-position))
@@ -152,40 +152,63 @@
 (defvar imbot--posframe-buffer " *imbot-posframe*"
   "The buffer name for candidate posframe.")
 
+;; https://github.com/tumashu/vertico-posframe
+(require 'eieio)
+(defun imbot-posframe-refposhandler (&optional frame)
+  "The default posframe refposhandler used by vertico-posframe.
+Optional argument FRAME ."
+  (cond
+   ;; EXWM environment
+   ((bound-and-true-p exwm--connection)
+    (or (ignore-errors
+          (let ((info (elt exwm-workspace--workareas
+                           exwm-workspace-current-index)))
+            (cons (oref info x)
+                  (oref info y))))
+        ;; Need user install xwininfo.
+        (ignore-errors
+          (posframe-refposhandler-xwininfo frame))
+        ;; Fallback, this value will incorrect sometime, for example: user
+        ;; have panel.
+        (cons 0 0)))
+   (t nil)))
+
+(defun imbot--tooltip-hide ()
+  (and imbot--posframe-buffer
+       (posframe-hide imbot--posframe-buffer)))
+
 (defun imbot--tooltip-posframe (tooltip)
   (if tooltip
       (posframe-show imbot--posframe-buffer
-                   :foreground-color (face-attribute 'imbot--tooltip-face :foreground)
-                   :background-color (face-attribute 'imbot--tooltip-face :background)
-                   :string tooltip)
-    (posframe-hide imbot--posframe-buffer)))
+                     :refposhandler 'imbot-posframe-refposhandler
+                     :foreground-color (face-attribute 'imbot--tooltip-face :foreground)
+                     :background-color (face-attribute 'imbot--tooltip-face :background)
+                     :string tooltip)
+    (imbot--tooltip-hide)))
 
 (defvar imbot--overriding nil)
+(defvar imbot--map-exit-function nil)
 
 (defun imbot--map-set ()
-  (set-transient-map imbot--map)
+  (setq imbot--map-exit-function (set-transient-map imbot--map t))
   ;; set-transient-map uses overriding-terminal-local-map
   ;; save the source of overriding in a variable
   (setq imbot--overriding t))
 
 (defun imbot--map-unset ()
-  (setq imbot--overriding nil))
+  (funcall imbot--map-exit-function)
+  (setq imbot--overriding nil)
+  (imbot--tooltip-hide))
 
 (defun imbot--update (key state)
   (let ((handled (imbot-backend-process-key key state)))
     ;; commit is still nil when composition is active
     (if handled
-        (let* ((output (imbot-backend-update-tooltip))
-               (tooltip (car output))
-               (commit (cdr output)))
-          (with-silent-modifications
-            (if tooltip
-                (imbot--map-set)
-              (imbot--map-unset))
-            (imbot--tooltip-posframe tooltip))
-          (when commit
-            (setq fcitx-ic-commit-string nil)
-            (insert commit)))
+        (let* ((tooltip (imbot-backend-update-tooltip)))
+          (if tooltip
+              (imbot--map-set)
+            (imbot--map-unset))
+          (imbot--tooltip-posframe tooltip))
       (list key))))
 
 (defun imbot--activate (&optional _name)
@@ -213,7 +236,6 @@
   (remove-hook 'post-command-hook 'imbot--suppress-check)
   (advice-remove 'keyboard-quit 'imbot--map-unset)
   (imbot-backend-escape)
-  (imbot-backend-focusout)
   (imbot--restore-cursor)
   (redisplay t))
 
@@ -239,6 +261,7 @@
     (define-key map (kbd "C-g") 'imbot-backend-escape)
     map))
 
+;; ref quail-input-method
 (defun imbot-input-method (key)
   "Process character KEY with input method, other keys not handled."
   (if (or imbot--suppressed
@@ -251,11 +274,14 @@
           ;; upper case letter
           ;; (and (> key 64) (< key 91))
           ;; (not (alpha-char-p key))
+          buffer-read-only
           (imbot--text-read-only-p))
       (list key)
     (imbot--update key 0)))
 
 (register-input-method "imbot" "euc-cn" 'imbot--activate "ㄓ" "smart input method")
+
+(advice-add 'toggle-input-method :after 'posframe-hide-all)
 
 (provide 'imbot)
 
