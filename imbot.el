@@ -261,21 +261,27 @@ Optional argument FRAME ."
     (define-key map (kbd "C-g") 'imbot-backend-escape)
     map))
 
+(defun imbot--special-p ()
+  (if (bound-and-true-p worf-mode)
+      (worf--special-p)
+    (or (region-active-p)
+        (looking-at outline-regexp))))
+
 ;; ref quail-input-method
 (defun imbot-input-method (key)
   "Process character KEY with input method, other keys not handled."
-  (if (or imbot--suppressed
-          ;; (lookup-key overriding-terminal-local-map (vector key))
-          ;; (eq (cadr overriding-terminal-local-map) universal-argument-map)
-          ;; (and overriding-terminal-local-map
-          ;;      (not (equal (cadr overriding-terminal-local-map) imbot--map)))
-          (and (or overriding-local-map overriding-terminal-local-map)
-               (not imbot--overriding))
-          ;; upper case letter
-          ;; (and (> key 64) (< key 91))
-          ;; (not (alpha-char-p key))
-          buffer-read-only
-          (imbot--text-read-only-p))
+  (if (and (not imbot--overriding)
+           (or imbot--suppressed
+               ;; (lookup-key overriding-terminal-local-map (vector key))
+               ;; (eq (cadr overriding-terminal-local-map) universal-argument-map)
+               ;; (and overriding-terminal-local-map
+               ;;      (not (equal (cadr overriding-terminal-local-map) imbot--map)))
+               (or overriding-local-map overriding-terminal-local-map)
+               ;; upper case letter
+               ;; (and (> key 64) (< key 91))
+               ;; (not (alpha-char-p key))
+               (imbot--special-p)
+               (imbot--text-read-only-p)))
       (list key)
     (imbot--update key 0)))
 
