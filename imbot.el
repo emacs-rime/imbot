@@ -18,7 +18,7 @@
 
 ;;; Commentary:
 
-;; imbot provide an emacs input method using fcitx5 through dbus or librime with a dynamic module.
+;; imbot provide an emacs input method frontend for fcitx5 via dbus
 ;; usage:
 ;; (require 'imbot)
 ;; (setq default-input-method "imbot")
@@ -173,32 +173,15 @@ Optional argument FRAME ."
         (cons 0 0)))
    (t nil)))
 
-(defun imbot--tooltip-hide ()
-  (and imbot--posframe-buffer
-       (posframe-hide imbot--posframe-buffer)))
-
-(defun imbot--tooltip-posframe (tooltip)
-  (if tooltip
-      (posframe-show imbot--posframe-buffer
-                     :refposhandler 'imbot-posframe-refposhandler
-                     :foreground-color (face-attribute 'imbot--tooltip-face :foreground)
-                     :background-color (face-attribute 'imbot--tooltip-face :background)
-                     :string tooltip)
-    (imbot--tooltip-hide)))
-
-(defvar imbot--overriding nil)
+(defvar imbot--transitive-map-active nil)
 (defvar imbot--map-exit-function nil)
 
-(defun imbot--map-set ()
-  (setq imbot--map-exit-function (set-transient-map imbot--map t))
-  ;; set-transient-map uses overriding-terminal-local-map
-  ;; save the source of overriding in a variable
-  (setq imbot--overriding t))
-
 (defun imbot--map-unset ()
-  (funcall imbot--map-exit-function)
-  (setq imbot--overriding nil)
-  (imbot--tooltip-hide))
+  (when imbot--transitive-map-active
+    (funcall imbot--map-exit-function)
+    (setq imbot--transitive-map-active nil))
+  (and imbot--posframe-buffer
+       (posframe-hide imbot--posframe-buffer)))
 
 (defun imbot--update (key state)
   (let ((handled (imbot-backend-process-key key state)))
@@ -206,9 +189,22 @@ Optional argument FRAME ."
     (if handled
         (let* ((tooltip (imbot-backend-update-tooltip)))
           (if tooltip
-              (imbot--map-set)
-            (imbot--map-unset))
-          (imbot--tooltip-posframe tooltip))
+              (progn
+                (posframe-show imbot--posframe-buffer
+                               :refposhandler 'imbot-posframe-refposhandler
+                               :background-color 'unspecified
+                               :foreground-color (face-attribute 'default :foreground)
+                               :border-width 1
+                               :border-color (face-attribute 'default :foreground)
+                               :left-fringe 5
+                               :right-fringe 5
+                               :y-pixel-offset 5
+                               :string tooltip)
+                (setq imbot--map-exit-function (set-transient-map imbot--map t))
+                ;; set-transient-map uses overriding-terminal-local-map
+                ;; save the source of overriding in a variable
+                (setq imbot--transitive-map-active t))
+            (imbot--map-unset)))
       (list key))))
 
 (defun imbot--activate (&optional _name)
@@ -270,7 +266,7 @@ Optional argument FRAME ."
 ;; ref quail-input-method
 (defun imbot-input-method (key)
   "Process character KEY with input method, other keys not handled."
-  (if (and (not imbot--overriding)
+  (if (and (not imbot--transitive-map-active)
            (or imbot--suppressed
                ;; (lookup-key overriding-terminal-local-map (vector key))
                ;; (eq (cadr overriding-terminal-local-map) universal-argument-map)
