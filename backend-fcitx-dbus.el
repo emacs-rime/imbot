@@ -109,13 +109,14 @@ You then interact with this new object path for input method operations. "
 ;; (s str)
 (defun fcitx-handler-for-commit-string (s)
   "use return to update region in iedit-mode"
-  (imbot--map-unset)
-  (insert s)
-  (set-buffer-modified-p t)
+  ;; (imbot--map-unset)
+  ;; (insert s)
+  ;; (set-buffer-modified-p t)
   ;; (run-hooks 'post-self-insert-hook)
-  (when (equal major-mode 'mistty-mode)
-    (mistty--post-command))
-  (redisplay))
+  ;; (when (equal major-mode 'mistty-mode)
+  ;;   (mistty--post-command))
+  ;; (redisplay)
+  (setq imbot--commit s))
 
 (defun fcitx-handler-for-client-ui (&rest tooltip)
   (setq imbot--tooltip tooltip))
@@ -168,35 +169,63 @@ You then interact with this new object path for input method operations. "
 (defun fcitx-process-key (keysym state)
   (fcitx-ic-call "ProcessKeyEvent" keysym 0 state nil 0))
 
-;; backend specific key definition
-(defvar imbot-backend-menu-keys `(("M-n" . #xFF56) ; Next PageDown
-                                  ("M-p" . #xFF55) ; Prior PageUp
-                                  ("C-n" . #xFF54) ; C-n Down
-                                  ("C-p" . #xFF52) ; Up
-                                  ("<escape>" . #xFF1B)
-                                  ("SPC" . #x020) ; Space
-                                  ("<return>" . #xFF0D)
-                                  ,@(mapcar (lambda (x) `(,(char-to-string x) . ,x))
-                                            (number-sequence ?0 ?9))))
+(defun fcitx-translate-emacs-key (key-seq)
+  "Translate output of `read-key-sequence` to (keysym . mask) for Fcitx5."
+  (let* ((event (let ((first (aref key-seq 0)))
+                  (if (sequencep first) (aref first 0) first)))
+         ;; If event is a string " ", convert to character ?\s
+         (clean-event (if (stringp event) (string-to-char event) event))
+         (base (event-basic-type clean-event))
+         (mods (event-modifiers event))
+         (mask 0) keysym)
 
-;; Select = 0xFF60
-;; #define XK_Select 0xff60  /* Select, mark */
-(defvar imbot-backend-composition-keys '(("C-d" . #xFFFF)
-                                       ("<deletechar>" . #xFFFF)
-                                       ("C-k" . (#xFFFF 1)) ; Shift+Delete
-                                       ("DEL" . #xFF08) ; BackSpace
-                                       ("<backspace>" . #xFF08)
-                                       ("<delete>" . #xFF08)
-                                       ("C-b" . #xFF51)   ; Left
-                                       ("C-f" . #xFF53)   ; Right
-                                       ("C-a" . #xFF50)   ; Home
-                                       ("C-e" . #xFF57))) ; End
+    ;; 1. Calculate the Mask (Fcitx5/X11 standard)
+    (when (memq 'shift mods) (setq mask (logior mask (ash 1 0)))) ; ShiftMask
+    (when (memq 'control mods) (setq mask (logior mask (ash 1 2)))) ; ControlMask
+    (when (memq 'meta mods) (setq mask (logior mask (ash 1 3))))    ; Mod1Mask (Alt)
+    (when (memq 'super mods) (setq mask (logior mask (ash 1 6))))   ; Mod4Mask (Super/Win)
+
+    ;; 2. Determine the Keysym
+    (cond
+     ;; Case A: It's a character (integer)
+     ((integerp base)
+      ;; Handle control characters (e.g., C-a is ASCII 1)
+      ;; Fcitx5 usually wants the 'raw' keysym + mask
+      (if (and (memq 'control mods) (< base 32))
+          (setq keysym (+ base 96)) ;; Map ASCII 1 to 'a' (97)
+        (setq keysym base)))
+
+     ;; Case B: It's a symbol (e.g., 'return, 'backspace, 'f1)
+     ((symbolp base)
+      (setq keysym
+            (let ((name (symbol-name base)))
+              (cond
+               ((string= name "return") 65293)
+               ;; Depending on your environment (terminal vs. GUI, OS, keyboard settings), backspace key typically yields:
+               ;; "\C-h" (ASCII 8, with control modifier) — treated as C-h
+               ;; "\d" (ASCII 127, no modifier) — the DEL character
+               ((string= name "backspace") 65288)
+               ;; ((string= name "tab") 65289)
+               ((string= name "escape") 65307)
+               ((string= name "deletechar") 65535)
+               ((string= name "home") 65360)
+               ((string= name "left") 65361)
+               ((string= name "up") 65362)
+               ((string= name "right") 65363)
+               ((string= name "down") 65364)
+               ((string= name "prior") 65365) ;; PageUp
+               ((string= name "next") 65366)  ;; PageDown
+               ;; ((string-match "f\\([0-9]+\\)" name)
+               ;;  (+ 65470 (- (string-to-number (match-string 1 name)) 1)))
+               (t nil))))))
+    (cons keysym mask)))
 
 (defvar fcitx-dbus-response-time 0.05)
 
 (defun imbot-backend-process-key (keysym &optional mask)
-  (sleep-for fcitx-dbus-response-time)
-  (fcitx-process-key keysym mask))
+  (unwind-protect
+      (fcitx-process-key keysym mask)
+    (sleep-for fcitx-dbus-response-time)))
 
 ;; (a(si) preedit, i cursorpos, a(si) auxUp, a(si) auxDown, a(ss) candidates,
 ;; i candidateIndex, i layoutHint, b hasPrev, b hasNext)
@@ -241,10 +270,10 @@ You then interact with this new object path for input method operations. "
 (defun imbot-backend-cleanup ()
   (fcitx-ic-call "DestroyIC"))
 
-(defun imbot-backend-escape ()
+(defun imbot-backend-send-escape ()
   "Clear the composition."
   (interactive)
-  ;; send escape
-  (imbot--process-key 65307 0))
+  (let ((event (fcitx-translate-emacs-key (kbd "ESC"))))
+    (imbot-backend-process-key (car event) (cdr event))))
 
 (provide 'backend-fcitx-dbus)

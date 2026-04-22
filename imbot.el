@@ -185,50 +185,19 @@ Optional argument FRAME ."
         (cons 0 0)))
    (t nil)))
 
-;; when imbot--map-exit-function is non nil, the transitive-map is active, keys in the map not handled by input method
-(defvar imbot--map-exit-function nil)
-(defvar imbot--tooltip nil)
-
-(defun imbot--map-unset ()
-  (when imbot--map-exit-function
-    (funcall imbot--map-exit-function)
-    (setq imbot--map-exit-function nil))
+(defun imbot--finish (&optional commit)
   (and imbot--posframe-buffer
        (posframe-hide imbot--posframe-buffer))
+  ;; flag for exiting the translation loop
+  (setq imbot--commit (or commit ""))
   (setq imbot--tooltip nil))
-
-(defun imbot--process-key (key state)
-  (let ((handled (imbot-backend-process-key key state)))
-    ;; commit is still nil when composition is active
-    (if handled
-        ;; commit will be inserted directly without going through the input method, has issues with isearch
-        (if imbot--tooltip
-            (let* ((formated-tooltip (imbot-backend-format-tooltip)))
-              (posframe-show imbot--posframe-buffer
-                             :refposhandler 'imbot-posframe-refposhandler
-                             :background-color 'unspecified
-                             :foreground-color (face-attribute 'default :foreground)
-                             :border-width 1
-                             :border-color (face-attribute 'default :foreground)
-                             :left-fringe 5
-                             :right-fringe 5
-                             :y-pixel-offset 5
-                             :string formated-tooltip)
-              ;; set-transient-map uses overriding-terminal-local-map
-              ;; save the source of overriding in a variable
-              ;; when transient map is active, key binding in this map not handled by input method
-              (setq imbot--map-exit-function (set-transient-map imbot--map t))
-              nil)
-          (imbot--map-unset))
-      ;; return non-handled event
-      (list key))))
 
 (defun imbot--activate (&optional _name)
   (unless buffer-read-only
     (setq-local input-method-function 'imbot-input-method)
     (setq-local deactivate-current-input-method-function #'imbot--deactivate)
     (add-hook 'post-command-hook 'imbot--suppress-check)
-    (advice-add 'keyboard-quit :after 'imbot--map-unset)
+    (advice-add 'keyboard-quit :after 'imbot--finish)
     (imbot-backend-activate)
     (add-hook 'kill-emacs-hook 'imbot-backend-cleanup)
     (setq cursor-type imbot--active-cursor)
@@ -237,31 +206,10 @@ Optional argument FRAME ."
 (defun imbot--deactivate ()
   (kill-local-variable 'input-method-function)
   (remove-hook 'post-command-hook 'imbot--suppress-check)
-  (advice-remove 'keyboard-quit 'imbot--map-unset)
-  (imbot-backend-escape)
+  (advice-remove 'keyboard-quit 'imbot--finish)
+  (imbot-backend-send-escape)
   (setq cursor-type imbot--inactive-cursor)
   (redisplay t))
-
-(defun imbot--send-functional-key ()
-  (interactive)
-  (let* ((keyseq (vector last-input-event))
-         (keyseq-name (key-description keyseq))
-         (state 0)
-         (keysym (cdr (or (assoc keyseq-name imbot-backend-menu-keys)
-                          (assoc keyseq-name imbot-backend-composition-keys))))
-         key)
-    (if (listp keysym)
-        (setq state (cadr keysym)
-              key (car keysym))
-      (setq key keysym))
-    (imbot--process-key key state)))
-
-(defvar imbot--map
-  (let ((map (make-sparse-keymap)))
-    (dolist (i (append imbot-backend-menu-keys imbot-backend-composition-keys))
-      (define-key map (kbd (car i)) 'imbot--send-functional-key))
-    (define-key map (kbd "C-g") 'imbot-backend-escape)
-    map))
 
 (defun imbot--special-p ()
   (if (bound-and-true-p worf-mode)
@@ -269,30 +217,106 @@ Optional argument FRAME ."
     (or (region-active-p)
         (looking-at outline-regexp))))
 
-;; ref quail-input-method, some keys are not handled by input method, like the return key
+(defun imbot-set-unread-command-events (key &optional reset)
+  "This function is a fork of `quail-add-unread-command-events'."
+  (when reset
+    (setq unread-command-events nil))
+  (setq unread-command-events
+        (if (characterp key)
+            (cons (cons 'no-record key) unread-command-events)
+          (append (cl-mapcan
+                   (lambda (e)
+                     (list (cons 'no-record e)))
+                   (append key nil))
+                  unread-command-events))))
+
+(defvar imbot--commit nil)
+(defvar imbot--tooltip nil)
+
+(defun imbot-translate (key orig-buffer)
+  "流程：
+1. 使用函数 `read-key-sequence' 得到 key-sequence
+2. 使用函数 `lookup-key' 查询 `imbot--map' 中述 key-sequence 的命令。
+3. 如果查询得到的命令是 self-insert-command 时，调用这个函数。
+4. 这个函数最终会返回需要插入到 buffer 的字符串。
+参考 elisp 手册相关章节:
+1. Invoking the Input Method
+2. Input Methods
+3. Miscellaneous Event Input Features
+4. Reading One Event"
+  (if (integerp key)
+      (let* ((echo-keystrokes 0)
+             (help-char nil)
+             (inhibit-modification-hooks t)
+             (inhibit-quit t)
+             (input-method-function nil)
+             (input-method-use-echo-area nil))
+        (imbot-set-unread-command-events key)
+        (setq imbot--commit nil)
+        (while (not imbot--commit)
+          ;; t as the fourth argument, return the raw keys even if this sequence isn't bound
+          (let* ((keyseq (read-key-sequence nil nil nil t))
+                 ;; fix backspace
+                 (keyseq (this-single-command-raw-keys))
+                 (event (fcitx-translate-emacs-key keyseq))
+                 (commit imbot--commit)
+                 handled)
+            ;; only handle a fixed number of keys, other keys should run normal command
+            (when (car event)
+              (setq handled (imbot-backend-process-key (car event) (cdr event))))
+            ;; preedit not empty
+            (if (nth 0 imbot--tooltip)
+                (if handled
+                    ;; update tooltip
+                    (posframe-show imbot--posframe-buffer
+                                   :refposhandler 'imbot-posframe-refposhandler
+                                   :background-color 'unspecified
+                                   :foreground-color (face-attribute 'default :foreground)
+                                   :border-width 1
+                                   :border-color (face-attribute 'default :foreground)
+                                   :left-fringe 5
+                                   :right-fringe 5
+                                   :y-pixel-offset 5
+                                   :string (imbot-backend-format-tooltip))
+                  ;; lookup keybinding and call corresponding command, while keep the translating loop
+                  (let* ((binding (key-binding keyseq))
+                         (cmd (or (command-remapping binding) binding)))
+                    (when (commandp cmd) (call-interactively cmd))))
+              (unwind-protect
+                  (if handled
+                      ;; commit is still nil whenever composition is active
+                      ;; either tooltip empty and commit non-empty, or tooltip non-empty commit nil
+                      (progn
+                        (sleep-for 0.05) ; wait for fcitx5 dbus to respond
+                        (imbot--finish (and commit
+                                            (string-to-list commit))))
+                    ;; keyseq not handled, simply return event(s) will get recursion
+                    (imbot--finish (listify-key-sequence (this-single-command-raw-keys))))
+                (unless (eq orig-buffer (current-buffer))
+                  (imbot--finish))))))
+        imbot--commit)
+    (unless (null key)
+      (char-to-string key))))
+
+;; ref quail-input-method
 (defun imbot-input-method (key)
   "Process character KEY with input method, other keys not handled."
   (if (or imbot--suppressed
-
-           ;; When an overriding keymap is active (e.g., `set-transient-map'
-           ;; used by spatial-window, avy, etc.), pass the key through if
-           ;; it has a binding there.  This matches quail's behavior per
-           ;; Emacs bug#68338.
-           (and overriding-terminal-local-map
-                (lookup-key overriding-terminal-local-map (vector key)))
-           overriding-local-map
-           ;; (eq (cadr overriding-terminal-local-map) universal-argument-map)
-           ;; (and overriding-terminal-local-map
-           ;;      (not (equal (cadr overriding-terminal-local-map) imbot--map)))
-
-           ;; upper case letter
-           ;; (and (> key 64) (< key 91))
-           ;; (not (alpha-char-p key))
-
-           (imbot--special-p)
-           (imbot--text-read-only-p))
+          ;; When an overriding keymap is active (e.g., `set-transient-map'
+          ;; used by spatial-window, avy, etc.), pass the key through if
+          ;; it has a binding there.  This matches quail's behavior per
+          ;; Emacs bug#68338.
+          (and overriding-terminal-local-map
+               (lookup-key overriding-terminal-local-map (vector key)))
+          overriding-local-map
+          (imbot--special-p)
+          (imbot--text-read-only-p))
       (list key)
-    (imbot--process-key key 0)))
+    (with-silent-modifications
+      (unwind-protect
+          (let ((result (imbot-translate key (current-buffer))))
+            (mapcar #'identity result))
+        (imbot--finish)))))
 
 (register-input-method "imbot" "euc-cn" 'imbot--activate "ㄓ" "smart input method")
 
