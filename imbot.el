@@ -1,6 +1,6 @@
 ;;; imbot.el --- Emacs input method  -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2025  Qiang Fang
+;; Copyright (C) 2026  Qiang Fang
 
 ;; Author: Qiang Fang
 ;; Keywords: convenience, input method, dbus
@@ -44,20 +44,20 @@
     (not (or (nth 3 (syntax-ppss))
              (nth 4 (syntax-ppss))))))
 
-(defvar imbot--default-cursor '(bar . 4))
-(setq-default cursor-type imbot--default-cursor)
-(setq-default cursor-in-non-selected-windows 'hollow)
+;; use shape only, eink display theme friendly
+(defvar imbot--active-cursor '(hbar . 4))
+(defvar imbot--inactive-cursor '(bar . 4))
+(defvar imbot--inline-cursor '(hollow . 4)
+  "Inline english cursor.")
+(setq-default cursor-type imbot--inactive-cursor)
+;; (setq-default cursor-in-non-selected-windows 'hollow)
 
 (defvar imbot--overlay nil
   "Inline english overlay.")
 
 (defun imbot--delete-overlay ()
   (delete-overlay imbot--overlay)
-  (setq cursor-type imbot--default-cursor)
   (setq imbot--overlay nil))
-
-(defvar imbot--inline-cursor '(hbar . 4)
-  "Inline english cursor.")
 
 (defface imbot--inline-face '((t (:weight bold :box nil :inverse-video nil)))
   "Face to show inline english (input method temperarily disabled) is active.")
@@ -87,7 +87,6 @@
             (imbot--delete-overlay))
         (when english-context
           (setq imbot--overlay (make-overlay visual-line-beginning (line-end-position) nil t t))
-          (setq cursor-type imbot--inline-cursor)
           (overlay-put imbot--overlay 'priority 900)
           (overlay-put imbot--overlay
                        'face 'imbot--inline-face)
@@ -108,7 +107,8 @@
   "Deactivate the inline english overlay."
   (interactive)
   (when (overlayp imbot--overlay)
-    (imbot--delete-overlay))
+    (imbot--delete-overlay)
+    (setq cursor-type imbot--active-cursor))
   (setq imbot--suppressed nil))
 
 (defun imbot--english-inline-quit ()
@@ -126,24 +126,36 @@
 (make-variable-buffer-local 'imbot--suppressed)
 
 (defun imbot--suppress-check ()
-  (if (equal input-method-function 'imbot-input-method)
-      (let ((suppressed (or (string-match " *temp*" (buffer-name))
-                            (seq-find 'funcall imbot--disable-predicates nil))))
-        (set-cursor-color "red")
+  (when (equal input-method-function 'imbot-input-method)
+    (let ((suppressed (or (string-match " *temp*" (buffer-name))
+                          (seq-find 'funcall imbot--disable-predicates nil))))
+      ;; only run on value change
+      (unless (equal imbot--suppressed suppressed)
         (if suppressed
-            (setq cursor-type imbot--inline-cursor)
-          (setq cursor-type imbot--default-cursor))
-        (unless (equal imbot--suppressed suppressed)
-          (redisplay t)
-          (setq imbot--suppressed suppressed)))
-    (imbot--restore-cursor)))
+            (progn (set-cursor-color "red")
+                   (setq cursor-type imbot--inline-cursor))
+          (if input-method-function
+              (setq cursor-type imbot--active-cursor)
+            (setq cursor-type imbot--inactive-cursor))
+          ;; Another special face is the cursor face.
+          ;; On graphical displays, the background color of this face is used to draw the text cursor.
+          ;; None of the other attributes of this face have any effect.
+          ;; As the foreground color for text under the cursor is taken from the background color of the underlying text.
+          ;; On text terminals, the appearance of the text cursor is determined by the terminal, not by the cursor face.
+          (custom-set-faces
+           '(cursor ((t (:inherit font-lock-keyword-face))))))
+        (redisplay t))
+      (setq imbot--suppressed suppressed))))
 
 (defun imbot--text-read-only-p ()
   "Return t if the text at point is read-only."
   ;; EWW: when a readonly buffer is readonly，it may still have modifiable text input field
-  (and (get-pos-property (point) 'read-only)
+  (and (or buffer-read-only
+           ;; (get-pos-property (point) 'read-only)
+           (and (get-char-property (point) 'read-only)
+                (get-char-property (point) 'front-sticky)))
        (not (or inhibit-read-only
-                (get-pos-property (point) 'inhibit-read-only)))))
+                (get-char-property (point) 'inhibit-read-only)))))
 
 (defface imbot--tooltip-face
   '((((background light)) :background "#bfffff") (t :background "#400000"))
@@ -173,38 +185,42 @@ Optional argument FRAME ."
         (cons 0 0)))
    (t nil)))
 
-(defvar imbot--transitive-map-active nil)
+;; when imbot--map-exit-function is non nil, the transitive-map is active, keys in the map not handled by input method
 (defvar imbot--map-exit-function nil)
+(defvar imbot--tooltip nil)
 
 (defun imbot--map-unset ()
-  (when imbot--transitive-map-active
+  (when imbot--map-exit-function
     (funcall imbot--map-exit-function)
-    (setq imbot--transitive-map-active nil))
+    (setq imbot--map-exit-function nil))
   (and imbot--posframe-buffer
-       (posframe-hide imbot--posframe-buffer)))
+       (posframe-hide imbot--posframe-buffer))
+  (setq imbot--tooltip nil))
 
-(defun imbot--update (key state)
+(defun imbot--process-key (key state)
   (let ((handled (imbot-backend-process-key key state)))
     ;; commit is still nil when composition is active
     (if handled
-        (let* ((tooltip (imbot-backend-update-tooltip)))
-          (if tooltip
-              (progn
-                (posframe-show imbot--posframe-buffer
-                               :refposhandler 'imbot-posframe-refposhandler
-                               :background-color 'unspecified
-                               :foreground-color (face-attribute 'default :foreground)
-                               :border-width 1
-                               :border-color (face-attribute 'default :foreground)
-                               :left-fringe 5
-                               :right-fringe 5
-                               :y-pixel-offset 5
-                               :string tooltip)
-                (setq imbot--map-exit-function (set-transient-map imbot--map t))
-                ;; set-transient-map uses overriding-terminal-local-map
-                ;; save the source of overriding in a variable
-                (setq imbot--transitive-map-active t))
-            (imbot--map-unset)))
+        ;; commit will be inserted directly without going through the input method, has issues with isearch
+        (if imbot--tooltip
+            (let* ((formated-tooltip (imbot-backend-format-tooltip)))
+              (posframe-show imbot--posframe-buffer
+                             :refposhandler 'imbot-posframe-refposhandler
+                             :background-color 'unspecified
+                             :foreground-color (face-attribute 'default :foreground)
+                             :border-width 1
+                             :border-color (face-attribute 'default :foreground)
+                             :left-fringe 5
+                             :right-fringe 5
+                             :y-pixel-offset 5
+                             :string formated-tooltip)
+              ;; set-transient-map uses overriding-terminal-local-map
+              ;; save the source of overriding in a variable
+              ;; when transient map is active, key binding in this map not handled by input method
+              (setq imbot--map-exit-function (set-transient-map imbot--map t))
+              nil)
+          (imbot--map-unset))
+      ;; return non-handled event
       (list key))))
 
 (defun imbot--activate (&optional _name)
@@ -215,24 +231,15 @@ Optional argument FRAME ."
     (advice-add 'keyboard-quit :after 'imbot--map-unset)
     (imbot-backend-activate)
     (add-hook 'kill-emacs-hook 'imbot-backend-cleanup)
+    (setq cursor-type imbot--active-cursor)
     (redisplay t)))
-
-;; Another special face is the cursor face.
-;; On graphical displays, the background color of this face is used to draw the text cursor.
-;; None of the other attributes of this face have any effect.
-;; As the foreground color for text under the cursor is taken from the background color of the underlying text.
-;; On text terminals, the appearance of the text cursor is determined by the terminal, not by the cursor face.
-(defun imbot--restore-cursor ()
-  (custom-set-faces
-   '(cursor ((t (:inherit font-lock-keyword-face)))))
-  (setq cursor-type imbot--default-cursor))
 
 (defun imbot--deactivate ()
   (kill-local-variable 'input-method-function)
   (remove-hook 'post-command-hook 'imbot--suppress-check)
   (advice-remove 'keyboard-quit 'imbot--map-unset)
   (imbot-backend-escape)
-  (imbot--restore-cursor)
+  (setq cursor-type imbot--inactive-cursor)
   (redisplay t))
 
 (defun imbot--send-functional-key ()
@@ -247,8 +254,7 @@ Optional argument FRAME ."
         (setq state (cadr keysym)
               key (car keysym))
       (setq key keysym))
-    ;; (message "function key is %s" keysym)
-    (imbot--update key state)))
+    (imbot--process-key key state)))
 
 (defvar imbot--map
   (let ((map (make-sparse-keymap)))
@@ -263,23 +269,30 @@ Optional argument FRAME ."
     (or (region-active-p)
         (looking-at outline-regexp))))
 
-;; ref quail-input-method
+;; ref quail-input-method, some keys are not handled by input method, like the return key
 (defun imbot-input-method (key)
   "Process character KEY with input method, other keys not handled."
-  (if (and (not imbot--transitive-map-active)
-           (or imbot--suppressed
-               ;; (lookup-key overriding-terminal-local-map (vector key))
-               ;; (eq (cadr overriding-terminal-local-map) universal-argument-map)
-               ;; (and overriding-terminal-local-map
-               ;;      (not (equal (cadr overriding-terminal-local-map) imbot--map)))
-               (or overriding-local-map overriding-terminal-local-map)
-               ;; upper case letter
-               ;; (and (> key 64) (< key 91))
-               ;; (not (alpha-char-p key))
-               (imbot--special-p)
-               (imbot--text-read-only-p)))
+  (if (or imbot--suppressed
+
+           ;; When an overriding keymap is active (e.g., `set-transient-map'
+           ;; used by spatial-window, avy, etc.), pass the key through if
+           ;; it has a binding there.  This matches quail's behavior per
+           ;; Emacs bug#68338.
+           (and overriding-terminal-local-map
+                (lookup-key overriding-terminal-local-map (vector key)))
+           overriding-local-map
+           ;; (eq (cadr overriding-terminal-local-map) universal-argument-map)
+           ;; (and overriding-terminal-local-map
+           ;;      (not (equal (cadr overriding-terminal-local-map) imbot--map)))
+
+           ;; upper case letter
+           ;; (and (> key 64) (< key 91))
+           ;; (not (alpha-char-p key))
+
+           (imbot--special-p)
+           (imbot--text-read-only-p))
       (list key)
-    (imbot--update key 0)))
+    (imbot--process-key key 0)))
 
 (register-input-method "imbot" "euc-cn" 'imbot--activate "ㄓ" "smart input method")
 

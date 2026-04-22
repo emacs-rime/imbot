@@ -3,6 +3,8 @@
 # About
 **imbot** removes the hassle of switching input method back and forth. Imbot provide an emacs input method using fcitx5 through dbus or librime with a dynamic module. It is recommended to use the fcitx-dbus backend for linux, and to use the rime-lib backend for Windows and Macos.
 
+Imbot insert translated/commit string directly when it's available, without using a read event command loop. It current has issue with isearch, which expect an input method work in other ways.
+
 # Install
 Put the files on load-path, or install __imbot__ from **melpa**.
 

@@ -15,10 +15,9 @@
 ;; dbus-monitor "interface='org.fcitx.Fcitx.InputContext1'"
 
 (defvar fcitx-service "org.fcitx.Fcitx5")
-(defvar fcitx-ic-tooltip nil)
 (defvar fcitx-ic-path nil)
 (defvar fcitx-ic-interface "org.fcitx.Fcitx.InputContext1")
-(defvar imbot-backend-im "rime")
+(defvar fcitx-im-name "rime")
 
 (defun fcitx-alive ()
   "Check if theres a running fcitx."
@@ -119,7 +118,7 @@ You then interact with this new object path for input method operations. "
   (redisplay))
 
 (defun fcitx-handler-for-client-ui (&rest tooltip)
-  (setq fcitx-ic-tooltip tooltip))
+  (setq imbot--tooltip tooltip))
 
 (when (bound-and-true-p exwm-enable)
   (defvar exwm-inside-input-field nil)
@@ -146,7 +145,7 @@ You then interact with this new object path for input method operations. "
     (fcitx-create-input-context (number-to-string (round (time-to-seconds)))))
   (fcitx-ic-call "FocusIn")
   ;; im is a string, such as pinyin, rime
-  (fcitx-controller-call "SetCurrentIM" :string imbot-backend-im))
+  (fcitx-controller-call "SetCurrentIM" :string fcitx-im-name))
 
 ;; keycode can be looked up in keyboard.py
 ;; keyval can be looked up in keysyms.py
@@ -174,8 +173,8 @@ You then interact with this new object path for input method operations. "
                                   ("M-p" . #xFF55) ; Prior PageUp
                                   ("C-n" . #xFF54) ; C-n Down
                                   ("C-p" . #xFF52) ; Up
-                                  ("SPC" . #x020)  ; Space
                                   ("<escape>" . #xFF1B)
+                                  ("SPC" . #x020) ; Space
                                   ("<return>" . #xFF0D)
                                   ,@(mapcar (lambda (x) `(,(char-to-string x) . ,x))
                                             (number-sequence ?0 ?9))))
@@ -193,7 +192,10 @@ You then interact with this new object path for input method operations. "
                                        ("C-a" . #xFF50)   ; Home
                                        ("C-e" . #xFF57))) ; End
 
+(defvar fcitx-dbus-response-time 0.05)
+
 (defun imbot-backend-process-key (keysym &optional mask)
+  (sleep-for fcitx-dbus-response-time)
   (fcitx-process-key keysym mask))
 
 ;; (a(si) preedit, i cursorpos, a(si) auxUp, a(si) auxDown, a(ss) candidates,
@@ -211,9 +213,9 @@ You then interact with this new object path for input method operations. "
 ;; ((("ni" 0)) 2 nil nil
 ;;  (("1 " "你") ("2 " "拟") ("3 " "泥") ("4 " "霓") ("5 " "尼"))
 ;;  0 0 nil t)
-(defun imbot-backend-update-tooltip ()
+(defun imbot-backend-format-tooltip ()
   "Build candidate menu tooltip from imbot context."
-  (destructuring-bind (preedit cursorpos auxUp auxDown candidates candidateIndex layoutHint hasPrev hasNext) fcitx-ic-tooltip
+  (destructuring-bind (preedit cursorpos auxUp auxDown candidates candidateIndex layoutHint hasPrev hasNext) imbot--tooltip
     (let (prompt-str page-str candidate-str)
       (when preedit (setq prompt-str (with-temp-buffer
                                        (insert (caar preedit))
@@ -243,6 +245,6 @@ You then interact with this new object path for input method operations. "
   "Clear the composition."
   (interactive)
   ;; send escape
-  (imbot--update 65307 0))
+  (imbot--process-key 65307 0))
 
 (provide 'backend-fcitx-dbus)
