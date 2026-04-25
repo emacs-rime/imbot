@@ -169,11 +169,9 @@ You then interact with this new object path for input method operations. "
 (defun fcitx-process-key (keysym state)
   (fcitx-ic-call "ProcessKeyEvent" keysym 0 state nil 0))
 
-(defun fcitx-translate-emacs-key (key-seq)
+(defun fcitx-translate-emacs-key (event)
   "Translate output of `read-key-sequence` to (keysym . mask) for Fcitx5."
-  (let* ((event (let ((first (aref key-seq 0)))
-                  (if (sequencep first) (aref first 0) first)))
-         ;; If event is a string " ", convert to character ?\s
+  (let* (;; If event is a string " ", convert to character ?\s
          (clean-event (if (stringp event) (string-to-char event) event))
          (base (event-basic-type clean-event))
          (mods (event-modifiers event))
@@ -193,7 +191,12 @@ You then interact with this new object path for input method operations. "
       ;; Fcitx5 usually wants the 'raw' keysym + mask
       (if (and (memq 'control mods) (< base 32))
           (setq keysym (+ base 96)) ;; Map ASCII 1 to 'a' (97)
-        (setq keysym base)))
+        (if (and (integerp clean-event)
+                 ;; base for captial letter might be out bound, so test clean-event
+                 (>= clean-event ?A)
+                 (<= clean-event ?Z))
+            (setq keysum nil)           ; fcitx5 doesn't accept upper case letters
+          (setq keysym base))))
 
      ;; Case B: It's a symbol (e.g., 'return, 'backspace, 'f1)
      ((symbolp base)
@@ -220,7 +223,7 @@ You then interact with this new object path for input method operations. "
                (t nil))))))
     (cons keysym mask)))
 
-(defvar fcitx-dbus-response-time 0.05)
+(defvar fcitx-dbus-response-time 0.1)
 
 (defun imbot-backend-process-key (keysym &optional mask)
   (unwind-protect

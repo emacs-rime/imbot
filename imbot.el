@@ -254,46 +254,55 @@ Optional argument FRAME ."
         (imbot-set-unread-command-events key)
         (setq imbot--commit nil)
         (while (not imbot--commit)
+          ;; note the difference between read-key-sequence and this-single-command-raw-keys
           ;; t as the fourth argument, return the raw keys even if this sequence isn't bound
-          (let* ((keyseq (read-key-sequence nil nil nil t))
+          (let* ((seq-direct (read-key-sequence nil nil nil t))
                  ;; fix backspace
                  (keyseq (this-single-command-raw-keys))
-                 (event (fcitx-translate-emacs-key keyseq))
-                 (commit imbot--commit)
-                 handled)
-            ;; only handle a fixed number of keys, other keys should run normal command
-            (when (car event)
-              (setq handled (imbot-backend-process-key (car event) (cdr event))))
-            ;; preedit not empty
-            (if (nth 0 imbot--tooltip)
-                (if handled
-                    ;; update tooltip
-                    (posframe-show imbot--posframe-buffer
-                                   :refposhandler 'imbot-posframe-refposhandler
-                                   :background-color 'unspecified
-                                   :foreground-color (face-attribute 'default :foreground)
-                                   :border-width 1
-                                   :border-color (face-attribute 'default :foreground)
-                                   :left-fringe 5
-                                   :right-fringe 5
-                                   :y-pixel-offset 5
-                                   :string (imbot-backend-format-tooltip))
-                  ;; lookup keybinding and call corresponding command, while keep the translating loop
-                  (let* ((binding (key-binding keyseq))
-                         (cmd (or (command-remapping binding) binding)))
-                    (when (commandp cmd) (call-interactively cmd))))
-              (unwind-protect
+                 (first (aref keyseq 0))
+                 ;; mouse click is a list (down-mouse-1 (#<window ...> ...))
+                 ;; describing the window, coordinates, and timestamp of your click
+                 ;; use with `arrayp` or `vectorp`, not `sequencep`
+                 ;; vectorp on mouse click event is nil
+                 (event (if (vectorp first) (aref first 0) first))
+                 commit handled)
+            (unless
+                ;; (mouse-event-p (elt event 0)
+                (sequencep event)
+              (setq event (fcitx-translate-emacs-key event))
+              ;; only handle a fixed number of keys, other keys should run normal command
+              (when (car event)
+                (setq handled (imbot-backend-process-key (car event) (cdr event))
+                      commit imbot--commit))
+              ;; preedit not empty
+              (if (nth 0 imbot--tooltip)
                   (if handled
-                      ;; commit is still nil whenever composition is active
-                      ;; either tooltip empty and commit non-empty, or tooltip non-empty commit nil
-                      (progn
-                        (sleep-for 0.05) ; wait for fcitx5 dbus to respond
+                      ;; update tooltip
+                      (posframe-show imbot--posframe-buffer
+                                     :refposhandler 'imbot-posframe-refposhandler
+                                     :background-color 'unspecified
+                                     :foreground-color (face-attribute 'default :foreground)
+                                     :border-width 1
+                                     :border-color (face-attribute 'default :foreground)
+                                     :left-fringe 5
+                                     :right-fringe 5
+                                     :y-pixel-offset 5
+                                     :string (imbot-backend-format-tooltip))
+                    ;; lookup keybinding and call corresponding command, while keep the translating loop
+                    (let* ((binding (key-binding event))
+                           (cmd (or (command-remapping binding) binding)))
+                      (when (commandp cmd) (call-interactively cmd))))
+                (unwind-protect
+                    (if handled
+                        ;; commit is still nil whenever composition is active
+                        ;; either tooltip empty and commit non-empty, or tooltip non-empty commit nil
                         (imbot--finish (and commit
-                                            (string-to-list commit))))
-                    ;; keyseq not handled, simply return event(s) will get recursion
-                    (imbot--finish (listify-key-sequence (this-single-command-raw-keys))))
-                (unless (eq orig-buffer (current-buffer))
-                  (imbot--finish))))))
+                                            (string-to-list commit)))
+                      ;; not in a composition, non-char character will not trigger input method
+                      ;; return event(s) will get recursion, so return the character
+                      (imbot--finish (listify-key-sequence (this-single-command-raw-keys))))
+                  (unless (eq orig-buffer (current-buffer))
+                    (imbot--finish)))))))
         imbot--commit)
     (unless (null key)
       (char-to-string key))))
