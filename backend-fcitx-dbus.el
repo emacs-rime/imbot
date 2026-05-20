@@ -174,6 +174,10 @@ You then interact with this new object path for input method operations. "
   (let* (;; If event is a string " ", convert to character ?\s
          (clean-event (if (stringp event) (string-to-char event) event))
          (base (event-basic-type clean-event))
+         ;; base for captial letter might be out of bound, so test clean-event
+         (capital-p (and (integerp clean-event)
+                         (>= clean-event ?A)
+                         (<= clean-event ?Z)))
          (mods (event-modifiers event))
          (mask 0) keysym)
 
@@ -191,12 +195,15 @@ You then interact with this new object path for input method operations. "
       ;; Fcitx5 usually wants the 'raw' keysym + mask
       (if (and (memq 'control mods) (< base 32))
           (setq keysym (+ base 96)) ;; Map ASCII 1 to 'a' (97)
-        (if (and (integerp clean-event)
-                 ;; base for captial letter might be out bound, so test clean-event
-                 (>= clean-event ?A)
-                 (<= clean-event ?Z))
-            (setq keysum nil)           ; fcitx5 doesn't accept upper case letters
-          (setq keysym base))))
+        (if
+            ;; fcitx5 doesn't accept upper case letter as first char, other places is accepted, eg. /Phi
+            (and (not (nth 0 imbot--tooltip))
+                 capital-p)
+            (setq keysum nil)
+          (if capital-p
+              ;; captial letter event does not have shift mod
+              (setq keysym clean-event)
+            (setq keysym base)))))
 
      ;; Case B: It's a symbol (e.g., 'return, 'backspace, 'f1)
      ((symbolp base)

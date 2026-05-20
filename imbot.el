@@ -28,6 +28,7 @@
 (require 'seq)
 (require 'dash)
 (require 'posframe)
+(require 'isearch)
 
 (defgroup imbot nil
   "imbot is a smart input method"
@@ -92,13 +93,13 @@
                        'face 'imbot--inline-face)
           (overlay-put imbot--overlay
                        'keymap (let ((keymap (make-sparse-keymap)))
+                                 (define-key keymap (kbd "C-\\")
+                                             #'imbot--english-inline-quit)
                                  (define-key keymap (kbd "C-g")
                                              #'imbot--english-inline-quit)
                                  (define-key keymap (kbd "RET")
                                              #'imbot--english-inline-deactivate)
                                  (define-key keymap (kbd "<return>")
-                                             #'imbot--english-inline-deactivate)
-                                 (define-key keymap (kbd "C-\\")
                                              #'imbot--english-inline-deactivate)
                                  keymap))))
       english-context)))
@@ -116,7 +117,10 @@
   (interactive)
   (when imbot--overlay
     (imbot--delete-overlay)
-    (imbot--deactivate)))
+    (imbot--deactivate)
+    (setq input-method-function nil
+          current-input-method nil
+          current-input-method-title nil)))
 
 (defvar imbot--disable-predicates
   '(imbot--predicate-english-context-p
@@ -125,15 +129,15 @@
 (defvar imbot--suppressed nil)
 (make-variable-buffer-local 'imbot--suppressed)
 
-(defun imbot--suppress-check ()
+(defun imbot--suppress-check (&optional force)
   (when (equal input-method-function 'imbot-input-method)
     (let ((suppressed (or (string-match " *temp*" (buffer-name))
                           (seq-find 'funcall imbot--disable-predicates nil))))
       ;; only run on value change
-      (unless (equal imbot--suppressed suppressed)
+      (when (or (not (equal imbot--suppressed suppressed))
+                force)
         (if suppressed
-            (progn (set-cursor-color "red")
-                   (setq cursor-type imbot--inline-cursor))
+            (setq cursor-type imbot--inline-cursor)
           (if input-method-function
               (setq cursor-type imbot--active-cursor)
             (setq cursor-type imbot--inactive-cursor))
@@ -201,14 +205,15 @@ Optional argument FRAME ."
     (imbot-backend-activate)
     (add-hook 'kill-emacs-hook 'imbot-backend-cleanup)
     (setq cursor-type imbot--active-cursor)
+    (imbot--suppress-check t)
     (redisplay t)))
 
 (defun imbot--deactivate ()
-  (kill-local-variable 'input-method-function)
   (remove-hook 'post-command-hook 'imbot--suppress-check)
   (advice-remove 'keyboard-quit 'imbot--finish)
   (imbot-backend-send-escape)
   (setq cursor-type imbot--inactive-cursor)
+  (setq isearch-input-method-function nil)
   (redisplay t))
 
 (defun imbot--special-p ()
@@ -251,12 +256,14 @@ Optional argument FRAME ."
              (inhibit-quit t)
              (input-method-function nil)
              (input-method-use-echo-area nil))
+        ;; preedit sometimes not empty
+        (imbot-backend-clear-composition)
         (imbot-set-unread-command-events key)
         (setq imbot--commit nil)
         (while (not imbot--commit)
           ;; note the difference between read-key-sequence and this-single-command-raw-keys
           ;; t as the fourth argument, return the raw keys even if this sequence isn't bound
-          (let* ((seq-direct (read-key-sequence nil nil nil t))
+          (let* ((seq-direct (read-key-sequence nil nil nil t nil t))
                  ;; fix backspace
                  (keyseq (this-single-command-raw-keys))
                  (first (aref keyseq 0))
@@ -266,10 +273,14 @@ Optional argument FRAME ."
                  ;; vectorp on mouse click event is nil
                  (event (if (vectorp first) (aref first 0) first))
                  commit handled)
+            ;; (message "%s" event)
             (unless
                 ;; (mouse-event-p (elt event 0)
                 (sequencep event)
               (setq event (fcitx-translate-emacs-key event))
+              ;; (notify (format "preedit %s" (nth 0 imbot--tooltip))
+              ;;         (format "event base %s car event %s" (event-basic-type event) (car event)))
+              ;; (sleep-for 3)
               ;; only handle a fixed number of keys, other keys should run normal command
               (when (car event)
                 (setq handled (imbot-backend-process-key (car event) (cdr event))
@@ -289,7 +300,8 @@ Optional argument FRAME ."
                                      :y-pixel-offset 5
                                      :string (imbot-backend-format-tooltip))
                     ;; lookup keybinding and call corresponding command, while keep the translating loop
-                    (let* ((binding (key-binding event))
+                    (let* ((binding (and (arrayp event)
+                                         (key-binding event)))
                            (cmd (or (command-remapping binding) binding)))
                       (when (commandp cmd) (call-interactively cmd))))
                 (unwind-protect
