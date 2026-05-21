@@ -53,6 +53,9 @@
 (setq-default cursor-type imbot--inactive-cursor)
 ;; (setq-default cursor-in-non-selected-windows 'hollow)
 
+(defvar imbot--commit nil "Holds string committed by D-Bus signal.")
+(defvar imbot--tooltip nil "Holds UI payload from Fcitx5 UI updates.")
+
 (defvar imbot--overlay nil
   "Inline english overlay.")
 
@@ -288,17 +291,19 @@ Optional argument FRAME ."
               ;; preedit not empty
               (if (nth 0 imbot--tooltip)
                   (if handled
-                      ;; update tooltip
-                      (posframe-show imbot--posframe-buffer
-                                     :refposhandler 'imbot-posframe-refposhandler
-                                     :background-color 'unspecified
-                                     :foreground-color (face-attribute 'default :foreground)
-                                     :border-width 1
-                                     :border-color (face-attribute 'default :foreground)
-                                     :left-fringe 5
-                                     :right-fringe 5
-                                     :y-pixel-offset 5
-                                     :string (imbot-backend-format-tooltip))
+                      (progn
+                        (posframe-show imbot--posframe-buffer
+                                       :refposhandler 'imbot-posframe-refposhandler
+                                       :background-color 'unspecified
+                                       :foreground-color (face-attribute 'default :foreground)
+                                       :border-width 1
+                                       :border-color (face-attribute 'default :foreground)
+                                       :left-fringe 5
+                                       :right-fringe 5
+                                       :y-pixel-offset 5
+                                       :string (imbot-backend-format-tooltip))
+                        ;; Force Emacs to render the child frame immediately before locking on the next read-key-sequence
+                        (redisplay))
                     ;; lookup keybinding and call corresponding command, while keep the translating loop
                     (let* ((binding (and (arrayp event)
                                          (key-binding event)))

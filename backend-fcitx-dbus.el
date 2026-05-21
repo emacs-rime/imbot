@@ -182,12 +182,14 @@ You then interact with this new object path for input method operations. "
          (mask 0) keysym)
 
     ;; 1. Calculate the Mask (Fcitx5/X11 standard)
-    (when (memq 'shift mods) (setq mask (logior mask (ash 1 0)))) ; ShiftMask
+    (when (memq 'shift mods) (setq mask (logior mask (ash 1 0))))   ; ShiftMask
     (when (memq 'control mods) (setq mask (logior mask (ash 1 2)))) ; ControlMask
     (when (memq 'meta mods) (setq mask (logior mask (ash 1 3))))    ; Mod1Mask (Alt)
     (when (memq 'super mods) (setq mask (logior mask (ash 1 6))))   ; Mod4Mask (Super/Win)
 
     ;; 2. Determine the Keysym
+    ;; fcitx5 doesn't accept upper case letter as first char
+    ;; capital letter in other places is accepted, eg. /Phi
     (cond
      ;; Case A: It's a character (integer)
      ((integerp base)
@@ -195,15 +197,10 @@ You then interact with this new object path for input method operations. "
       ;; Fcitx5 usually wants the 'raw' keysym + mask
       (if (and (memq 'control mods) (< base 32))
           (setq keysym (+ base 96)) ;; Map ASCII 1 to 'a' (97)
-        (if
-            ;; fcitx5 doesn't accept upper case letter as first char, other places is accepted, eg. /Phi
-            (and (not (nth 0 imbot--tooltip))
-                 capital-p)
-            (setq keysum nil)
-          (if capital-p
-              ;; captial letter event does not have shift mod
-              (setq keysym clean-event)
-            (setq keysym base)))))
+        (if capital-p
+            ;; captial letter event does not have shift mod
+            (setq keysym clean-event)
+          (setq keysym base))))
 
      ;; Case B: It's a symbol (e.g., 'return, 'backspace, 'f1)
      ((symbolp base)
@@ -230,12 +227,28 @@ You then interact with this new object path for input method operations. "
                (t nil))))))
     (cons keysym mask)))
 
-(defvar fcitx-dbus-response-time 0.1)
+(defvar fcitx-dbus-max-timeout 0.1
+  "Maximum second to wait for Fcitx5 signals before giving up.")
 
 (defun imbot-backend-process-key (keysym &optional mask)
-  (unwind-protect
-      (fcitx-process-key keysym mask)
-    (sleep-for fcitx-dbus-response-time)))
+  "Send key to D-Bus and reactively pump the event loop until signals fire."
+  (let ((old-tooltip imbot--tooltip)
+        (old-commit imbot--commit)
+        (start-time (float-time))
+        handled)
+    ;; 1. Capture whether Fcitx5 actually swallowed/filtered the key
+    (setq handled (fcitx-process-key keysym mask))
+
+    ;; 2. Only wait for async D-Bus signals if Fcitx is actively processing it.
+    ;;    If handled is nil, no UI updates or commits are coming anyway.
+    (when handled
+      (while (and (equal old-tooltip imbot--tooltip)
+                  (equal old-commit imbot--commit)
+                  (< (- (float-time) start-time) fcitx-dbus-max-timeout))
+        (accept-process-output nil 0.001)))
+
+    ;; 3. Return the actual boolean back to imbot-translate
+    handled))
 
 ;; (a(si) preedit, i cursorpos, a(si) auxUp, a(si) auxDown, a(ss) candidates,
 ;; i candidateIndex, i layoutHint, b hasPrev, b hasNext)
